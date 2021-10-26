@@ -1,0 +1,283 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "global - ECS Cluster for all projects",
+    "Parameters": {
+        "VpcId": {
+            "Description": "VPC id",
+            "Type": "AWS::EC2::VPC::Id"
+        },
+        "SecurityGroups": {
+            "Description": "Security groups to attach to ECS Cluster",
+            "Type": "List<AWS::EC2::SecurityGroup::Id>"
+        },
+        "DockerHubPassword": {
+            "Description": "Docker hub password",
+            "Type": "String",
+            "AllowedPattern": ".+",
+            "NoEcho": true
+        }
+    },
+    "Mappings": {
+        "VpcMap": {
+            "vpc-0b98353f7ea7e6a40": {
+                "Environment": "recette",
+                "DockerHubUser": "XXXXXX",
+                "DockerHubEmail": "XXXXXX",
+                "KeyPair": "recette",
+                "PrivateSubnets": [
+                    "subnet-XXXXXX",
+                    "subnet-XXXXXX",
+                    "subnet-XXXXXX"
+                ],
+                "DefaultSecurityGroup": "sg-XXXXXX",
+                "Ami": "ami-XXXXXX",
+                "IntanceType": "t2.medium"
+            },
+            "vpc-0fe068151e16053d4": {
+                "Environment": "production",
+                "DockerHubUser": "XXXXXX",
+                "DockerHubEmail": "XXXXXX",
+                "KeyPair": "production",
+                "PrivateSubnets": [
+                    "subnet-XXXXXX",
+                    "subnet-XXXXXX",
+                    "subnet-XXXXXX"
+                ],
+                "DefaultSecurityGroup": "sg-XXXXXX",
+                "Ami": "ami-XXXXXX",
+                "IntanceType": "t2.medium"
+            }
+        }
+    },
+    "Resources": {
+        "EcsCluster": {
+            "Type": "AWS::ECS::Cluster",
+            "Properties": {
+                "ClusterName": { "Fn::FindInMap": [ "VpcMap", { "Ref": "VpcId" }, "Environment"] }
+            }
+        },
+        "EcsInstancePolicy": {
+            "Type": "AWS::IAM::Policy",
+            "Properties": {
+                "PolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Action": "ecs:*",
+                            "Resource": "*"
+                        },
+                        {
+                            "Sid": "AccesToApplicationSecretBucket",
+                            "Action": "s3:*",
+                            "Effect": "Allow",
+                            "Resource": "arn:aws:s3:::XXXXXX"
+                        },
+                        {
+                            "Sid": "AccesToApplicationSecretBucketContent",
+                            "Action": "s3:*",
+                            "Effect": "Allow",
+                            "Resource": "arn:aws:s3:::XXXXXX/*"
+                        },
+                        {
+                            "Sid": "AllowToManipulateEc2AndElb",
+                            "Action": [
+                                "elasticloadbalancing:DeregisterInstancesFromLoadBalancer",
+                                "elasticloadbalancing:DeregisterTargets",
+                                "elasticloadbalancing:Describe*",
+                                "elasticloadbalancing:RegisterInstancesWithLoadBalancer",
+                                "elasticloadbalancing:RegisterTargets",
+                                "ec2:Describe*",
+                                "ec2:AuthorizeSecurityGroupIngress"
+                            ],
+                            "Effect": "Allow",
+                            "Resource": "*"
+                        }
+                    ]
+                },
+                "Roles": [
+                    { "Ref": "EcsInstanceRole" }
+                ],
+                "PolicyName": { "Fn::Join": [ "",
+                    [
+                        "ecs-instance-policy-",
+                        { "Ref": "AWS::Region" },
+                        "-",
+                        { "Fn::FindInMap": [ "VpcMap", { "Ref": "VpcId" }, "Environment"] }
+                    ]
+                ] }
+            }
+        },
+        "EcsInstanceRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "ManagedPolicyArns": [
+                    "arn:aws:iam::aws:policy/ReadOnlyAccess",
+                    "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role"
+                ],
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "ec2.amazonaws.com",
+                                    "ecs.amazonaws.com"
+                                ]
+                            },
+                            "Action": "sts:AssumeRole"
+                        }
+                    ]
+                },
+                "RoleName": { "Fn::Join": [ "", [
+                    "ecs-instance-role-",
+                    { "Ref": "AWS::Region" },
+                    "-",
+                    { "Fn::FindInMap": [ "VpcMap", { "Ref": "VpcId" }, "Environment"] }
+                ] ] }
+            }
+        },
+        "EcsInstanceProfile": {
+            "Type": "AWS::IAM::InstanceProfile",
+            "Properties": {
+                "Path": "/",
+                "Roles": [
+                    { "Ref": "EcsInstanceRole" }
+                ]
+            }
+        },
+        "EcsLaunchConfiguration": {
+            "Type": "AWS::AutoScaling::LaunchConfiguration",
+            "DependsOn": [ "EcsCluster" ],
+            "Properties": {
+                "AssociatePublicIpAddress": false,
+                "ImageId": { "Fn::FindInMap": [ "VpcMap", { "Ref": "VpcId" }, "Ami"] },
+                "InstanceType": { "Fn::FindInMap": [ "VpcMap", { "Ref": "VpcId" }, "IntanceType"] },
+                "KeyName": { "Fn::FindInMap": [ "VpcMap", { "Ref": "VpcId" }, "KeyPair"] },
+                "SecurityGroups": { "Fn::Split": [ ",",
+                    { "Fn::Join": [ ",", [
+                        { "Fn::FindInMap": [ "VpcMap", { "Ref": "VpcId" }, "DefaultSecurityGroup"] },
+                        { "Fn::Join": [ ",", { "Ref": "SecurityGroups" } ] }
+                    ] ] }
+                ] },
+                "UserData": {
+                    "Fn::Base64": { "Fn::Join": [ "", [
+                        "#!/bin/bash -xe\n",
+                        "yum install -y aws-cli\n",
+                        "echo ECS_CLUSTER=", { "Ref": "EcsCluster" }, " >> /etc/ecs/ecs.config\n",
+                        "echo ECS_ENGINE_AUTH_TYPE=docker >> /etc/ecs/ecs.config\n",
+                        "echo ECS_ENGINE_AUTH_DATA='{\"https://index.docker.io/v1/\":{\"username\":\"", { "Fn::FindInMap": [ "VpcMap", { "Ref": "VpcId" }, "DockerHubUser"] }, "\",\"password\":\"", { "Ref": "DockerHubPassword" } ,"\",\"email\":\"", { "Fn::FindInMap": [ "VpcMap", { "Ref": "VpcId" }, "DockerHubEmail"] }, "\"}}' >> /etc/ecs/ecs.config\n",
+                        "mkdir /data\n",
+                        "mkdir /data/projects\n",
+                        "aws s3 sync s3://XXXXXX/ecs-data/ /data/projects/\n"
+                    ] ] }
+                },
+                "IamInstanceProfile": { "Ref": "EcsInstanceProfile" }
+            }
+        },
+        "EcsAutoScalingGroup": {
+            "Type": "AWS::AutoScaling::AutoScalingGroup",
+            "DependsOn": [ "EcsCluster", "EcsLaunchConfiguration" ],
+            "Properties": {
+                "HealthCheckType": "EC2",
+                "LaunchConfigurationName": { "Ref": "EcsLaunchConfiguration" },
+                "MaxSize": 4,
+                "MinSize": 2,
+                "VPCZoneIdentifier": { "Fn::FindInMap": [ "VpcMap", { "Ref": "VpcId" }, "PrivateSubnets"] },
+                "TerminationPolicies": [
+                    "OldestInstance"
+                ],
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": { "Fn::Join": ["", [{ "Fn::FindInMap": [ "VpcMap", { "Ref": "VpcId" }, "Environment"] }, " - ECS cluster"]] },
+                        "PropagateAtLaunch": true
+                    },
+                    {
+                        "Key": "project",
+                        "Value": "global",
+                        "PropagateAtLaunch": true
+                    },
+                    {
+                        "Key": "environment",
+                        "Value": { "Fn::FindInMap": [ "VpcMap", { "Ref": "VpcId" }, "Environment"] },
+                        "PropagateAtLaunch": true
+                    }
+                ]
+            }
+        },
+        "EcsScaleUpPolicy": {
+            "Type": "AWS::AutoScaling::ScalingPolicy",
+            "Properties": {
+                "AdjustmentType": "ChangeInCapacity",
+                "AutoScalingGroupName": { "Ref": "EcsAutoScalingGroup" },
+                "ScalingAdjustment": "1"
+            }
+        },
+        "EcsCPUAlarmHigh": {
+            "Type": "AWS::CloudWatch::Alarm",
+            "Properties": {
+                "AlarmDescription": "ECS cluster - CPU overused",
+                "EvaluationPeriods": "3",
+                "Statistic": "Average",
+                "Threshold": "60",
+                "Period": "60",
+                "AlarmActions": [
+                    { "Ref": "EcsScaleUpPolicy" }
+                ],
+                "Namespace": "AWS/EC2",
+                "Dimensions": [
+                    {
+                        "Name": "AutoScalingGroupName",
+                        "Value": {
+                            "Ref": "EcsAutoScalingGroup"
+                        }
+                    }
+                ],
+                "ComparisonOperator": "GreaterThanThreshold",
+                "MetricName": "CPUUtilization"
+            }
+        },
+        "EcsScaleDownPolicy": {
+            "Type": "AWS::AutoScaling::ScalingPolicy",
+            "Properties": {
+                "AdjustmentType": "ChangeInCapacity",
+                "AutoScalingGroupName": { "Ref": "EcsAutoScalingGroup" },
+                "ScalingAdjustment": "-1"
+            }
+        },
+        "EcsCPUAlarmLow": {
+            "Type": "AWS::CloudWatch::Alarm",
+            "Properties": {
+                "AlarmDescription": "ECS cluster - CPU is underused",
+                "EvaluationPeriods": "3",
+                "Statistic": "Average",
+                "Threshold": "30",
+                "Period": "60",
+                "AlarmActions": [
+                    { "Ref": "EcsScaleDownPolicy" }
+                ],
+                "Namespace": "AWS/EC2",
+                "Dimensions": [
+                    {
+                        "Name": "AutoScalingGroupName",
+                        "Value": {
+                            "Ref": "EcsAutoScalingGroup"
+                        }
+                    }
+                ],
+                "ComparisonOperator": "LessThanThreshold",
+                "MetricName": "CPUUtilization"
+            }
+        }
+    },
+    "Outputs": {
+        "EcsClusterArn": {
+            "Value": { "Fn::GetAtt": [ "EcsCluster", "Arn"] }
+        },
+        "EcsClusterName": {
+            "Value": { "Ref": "EcsCluster" }
+        }
+    }
+}

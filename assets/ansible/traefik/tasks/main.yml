@@ -1,0 +1,47 @@
+- name: Download Traefik
+  get_url:
+    url: https://github.com/containous/traefik/releases/download/{{ traefik_version }}/traefik_linux-amd64
+    dest: /usr/bin/traefik
+
+- name: Make Traefik executable
+  file:
+    dest: /usr/bin/traefik
+    mode: a+x
+
+- name: Copy configuration file
+  template:
+    src: traefik.toml.j2
+    dest: /etc/traefik.toml
+    mode: 0664
+
+- name: Copy service file
+  copy:
+    src: traefik.service
+    dest: /etc/systemd/system/traefik.service
+    mode: 0664
+
+- name: Create Traefik log directory
+  file:
+    path: /var/log/traefik
+    state: directory
+    mode: 0755
+
+- name: Start Treafik at startup
+  systemd:
+    name: traefik.service
+    state: restarted
+    enabled: yes
+    daemon_reload: yes
+
+- name: Rotate Traefik log files
+  logrotate:
+    name: traefik-logs
+    path: /var/log/traefik/traefik.log
+    options:
+      - rotate 7
+      - daily
+      - compress
+      - size=1M
+      - missingok
+      - delaycompress
+      - copytruncate

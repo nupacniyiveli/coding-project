@@ -1,0 +1,28 @@
+version: '2'
+
+services:
+  database:
+    image: postgres:9.6-alpine
+    environment:
+      - POSTGRES_DB=myc
+      - POSTGRES_USER=myc
+      - POSTGRES_PASSWORD=myc
+  redis:
+    image: redis:4.0-alpine
+  web:
+    build:
+      context: ./applications/web
+    env_file:
+      - ./applications/web/build/env/configuration.env.dist
+      - ./applications/web/build/env/configuration.env
+    environment:
+      - APPLICATION_VERSION=development
+    volumes:
+      - ./applications/web/:/var/www/html/
+    ports:
+      - 80:80
+  worker:
+    build:
+      context: ./applications/worker
+    volumes:
+      - ./applications/worker/:/opt/my-worker/

@@ -1,0 +1,33 @@
+---
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: my-challenge
+spec:
+  type: NodePort
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: web
+          image: my-challenge_web:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 80
+        - name: worker
+          image: my-challenge_worker:latest
+          imagePullPolicy: Never
+        - name: database
+          image: postgres:9.6-alpine
+          env:
+            - name: POSTGRES_DB
+              value: myc
+            - name: POSTGRES_USER
+              value: myc
+            - name: POSTGRES_PASSWORD
+              value: myc
+        - name: redis
+          image: redis:4.0-alpine

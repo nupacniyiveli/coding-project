@@ -1,0 +1,152 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Application stack",
+    "Parameters": {
+        "VpcId": {
+            "Description": "VPC id",
+            "Type": "AWS::EC2::VPC::Id"
+        }
+    },
+    "Mappings": {
+        "VpcMap": {
+            "vpc-XXXXXX": {
+                "Environment": "recette",
+                "EcsClientSg": "sg-XXXXXX",
+                "PublicSubnets": [
+                    "subnet-XXXXXX",
+                    "subnet-XXXXXX",
+                    "subnet-XXXXXX"
+                ],
+                "Certificate": "arn:aws:acm:eu-west-1:XXXXXX:certificate/XXXXXX"
+            },
+            "vpc-YYYYYY": {
+                "Environment": "production",
+                "EcsClientSg": "sg-YYYYYY",
+                "PublicSubnets": [
+                    "subnet-YYYYYY",
+                    "subnet-YYYYYY",
+                    "subnet-YYYYYY"
+                ],
+                "Certificate": "arn:aws:acm:eu-west-3:YYYYYY:certificate/YYYYYY"
+            }
+        }
+    },
+    "Resources": {
+        "BackendApiLoadBalancerSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": { "Fn::Join": ["", [ { "Fn::FindInMap" : [ "VpcMap", { "Ref": "VpcId" }, "Environment"] }, " - API - LoadBalancer"]] },
+                "VpcId" : { "Ref": "VpcId" },
+                "SecurityGroupIngress": [
+                    {
+                        "Description": "Allow HTTPS from Internet",
+                        "CidrIp": "0.0.0.0/0",
+                        "IpProtocol": "tcp",
+                        "FromPort": "443",
+                        "ToPort": "443"
+                    }
+                ],
+                "Tags": [
+                    { "Key": "Name", "Value": { "Fn::Join": ["", [ { "Fn::FindInMap" : [ "VpcMap", { "Ref": "VpcId" }, "Environment"] }, " -  API ALB"]] } },
+                    { "Key": "environment", "Value": { "Fn::FindInMap" : [ "VpcMap", { "Ref": "VpcId" }, "Environment"] } }
+                ]
+            }
+        },
+        "BackendApiLoadBalancer": {
+            "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+            "DependsOn": [ "BackendApiLoadBalancerSecurityGroup" ],
+            "Properties": {
+                "Scheme": "internet-facing",
+                "LoadBalancerAttributes": [
+                    {
+                        "Key": "idle_timeout.timeout_seconds",
+                        "Value": "30"
+                    }
+                ],
+                "Subnets": { "Fn::FindInMap" : [ "VpcMap", { "Ref": "VpcId" }, "PublicSubnets"] },
+                "SecurityGroups": [
+                    { "Ref": "BackendApiLoadBalancerSecurityGroup" },
+                    { "Fn::FindInMap" : [ "VpcMap", { "Ref": "VpcId" }, "EcsClientSg"] }
+                ],
+                "Type": "application",
+                "IpAddressType": "ipv4",
+                "Tags": [
+                    { "Key": "Name", "Value": { "Fn::Join": ["", [ { "Fn::FindInMap" : [ "VpcMap", { "Ref": "VpcId" }, "Environment"] }, " -  API"]] } },
+                    { "Key": "environment", "Value": { "Fn::FindInMap" : [ "VpcMap", { "Ref": "VpcId" }, "Environment"] } }
+                ]
+            }
+        },
+        "BackendApiTargetGroup": {
+            "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+            "DependsOn": [ "BackendApiLoadBalancer" ],
+            "Properties": {
+                "HealthCheckIntervalSeconds": 30,
+                "HealthCheckPath": "/api/en/version",
+                "HealthCheckProtocol": "HTTP",
+                "HealthCheckTimeoutSeconds": 10,
+                "HealthyThresholdCount": 2,
+                "Matcher": {
+                    "HttpCode": 200
+                },
+                "Port": 80,
+                "Protocol": "HTTP",
+                "VpcId": { "Ref": "VpcId" },
+                "Tags": [
+                    { "Key": "Name", "Value": { "Fn::Join": ["", [ { "Fn::FindInMap" : [ "VpcMap", { "Ref": "VpcId" }, "Environment"] }, " -  API"]] } },
+                    { "Key": "environment", "Value": { "Fn::FindInMap" : [ "VpcMap", { "Ref": "VpcId" }, "Environment"] } }
+                ]
+            }
+        },
+        "BackendApiLoadBalancerListener": {
+            "Type": "AWS::ElasticLoadBalancingV2::Listener",
+            "DependsOn": [ "BackendApiTargetGroup" ],
+            "Properties": {
+                "Certificates": [
+                    {
+                        "CertificateArn": { "Fn::FindInMap" : [ "VpcMap", { "Ref": "VpcId" }, "Certificate"] }
+                    }
+                ],
+                "DefaultActions": [
+                    {
+                        "Type": "forward",
+                        "TargetGroupArn": { "Ref": "BackendApiTargetGroup" }
+                    }
+                ],
+                "LoadBalancerArn": { "Ref": "BackendApiLoadBalancer" },
+                "Port": "443",
+                "Protocol": "HTTPS",
+                "SslPolicy": "ELBSecurityPolicy-2016-08"
+            }
+        },
+        "BackendApiListenerRule": {
+            "Type": "AWS::ElasticLoadBalancingV2::ListenerRule",
+            "DependsOn": [ "BackendApiLoadBalancerListener" ],
+            "Properties": {
+                "Actions": [
+                    {
+                        "Type": "forward",
+                        "TargetGroupArn": { "Ref": "BackendApiTargetGroup" }
+                    }
+                ],
+                "Conditions": [
+                    {
+                        "Field": "path-pattern",
+                        "Values": [
+                            "/"
+                        ]
+                    }
+                ],
+                "ListenerArn": { "Ref": "BackendApiLoadBalancerListener" },
+                "Priority": 1
+            }
+        }
+    },
+    "Outputs": {
+        "BackendApiLoadBalancerDns": {
+            "Value": { "Fn::GetAtt": [ "BackendApiLoadBalancer", "DNSName" ] }
+        },
+        "BackendApiTargetGroup": {
+            "Value": { "Ref": "BackendApiTargetGroup" }
+        }
+    }
+}

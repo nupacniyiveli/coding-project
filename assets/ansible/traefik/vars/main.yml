@@ -1,0 +1,7 @@
+# technical configuration
+traefik_version: v1.4.4
+
+# business configuration
+web_admin_port: 8080
+default_entry_points: "\"http\", \"https\""
+domain_name: this_should_be_set_on_playbook

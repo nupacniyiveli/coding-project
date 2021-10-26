@@ -1,0 +1,173 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "global - EC2 bastion for SSH usage",
+    "Parameters": {
+        "VpcId": {
+            "Description": "VPC id",
+            "Type": "AWS::EC2::VPC::Id"
+        },
+        "SecurityGroups": {
+            "Description": "Security groups to attach to Bastion server",
+            "Type": "List<AWS::EC2::SecurityGroup::Id>"
+        }
+    },
+    "Mappings": {
+        "VpcMap": {
+            "vpc-0b98353f7ea7e6a40": {
+                "Environment": "recette",
+                "KeyPair": "recette",
+                "PublicSubnets": [
+                    "subnet-XXXXXX",
+                    "subnet-YYYYYY",
+                    "subnet-ZZZZZZ"
+                ],
+                "DefaultSecurityGroup": "sg-XXXXXX",
+                "AllowShhFromInternet": "sg-XXXXXX",
+                "Ami": "ami-XXXXXX",
+                "IntanceType": "t2.micro",
+                "AllocationId": "eipalloc-XXXXXX"
+            },
+            "vpc-0fe068151e16053d4": {
+                "Environment": "production",
+                "KeyPair": "production",
+                "PublicSubnets": [
+                    "subnet-XXXXXX",
+                    "subnet-YYYYYY",
+                    "subnet-ZZZZZZ"
+                ],
+                "DefaultSecurityGroup": "sg-XXXXXX",
+                "AllowShhFromInternet": "sg-XXXXXX",
+                "Ami": "ami-XXXXXX",
+                "IntanceType": "t2.micro",
+                "AllocationId": "eipalloc-XXXXXX"
+            }
+        }
+    },
+    "Resources": {
+        "BastionInstanceRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "ec2.amazonaws.com"
+                                ]
+                            },
+                            "Action": "sts:AssumeRole"
+                        }
+                    ]
+                },
+                "RoleName": { "Fn::Join": [ "", [
+                    "bastion-instance-role-",
+                    { "Ref": "AWS::Region" },
+                    "-",
+                    { "Fn::FindInMap" : [ "VpcMap", { "Ref" : "VpcId" }, "Environment"] }
+                ] ] }
+            }
+        },
+        "BastionInstancePolicy": {
+            "Type": "AWS::IAM::Policy",
+            "DependsOn": [ "BastionInstanceRole" ],
+            "Properties": {
+                "PolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Sid": "AllowToManipulateElasticIpAssociation",
+                            "Effect": "Allow",
+                            "Action": [
+                                "ec2:AllocateAddress",
+                                "ec2:AssociateAddress",
+                                "ec2:DescribeAddresses",
+                                "ec2:DisassociateAddress"
+                            ],
+                            "Resource": "*"
+                        }
+                    ]
+                },
+                "Roles": [
+                    { "Ref": "BastionInstanceRole" }
+                ],
+                "PolicyName": { "Fn::Join": [ "",
+                    [
+                        "bastion-instance-policy-",
+                        { "Ref": "AWS::Region" },
+                        "-",
+                        { "Fn::FindInMap" : [ "VpcMap", { "Ref" : "VpcId" }, "Environment"] }
+                    ]
+                ] }
+            }
+        },
+        "BastionInstanceProfile": {
+            "Type": "AWS::IAM::InstanceProfile",
+            "DependsOn": [ "BastionInstanceRole" ],
+            "Properties": {
+                "Path": "/",
+                "Roles": [
+                    { "Ref": "BastionInstanceRole" }
+                ]
+            }
+        },
+        "BastionLaunchConfiguration": {
+            "Type": "AWS::AutoScaling::LaunchConfiguration",
+            "DependsOn": [ "BastionInstanceProfile" ],
+            "Properties": {
+                "AssociatePublicIpAddress": true,
+                "IamInstanceProfile": { "Ref": "BastionInstanceProfile" },
+                "ImageId": { "Fn::FindInMap" : [ "VpcMap", { "Ref" : "VpcId" }, "Ami"] },
+                "InstanceMonitoring": false,
+                "InstanceType": { "Fn::FindInMap" : [ "VpcMap", { "Ref" : "VpcId" }, "IntanceType"] },
+                "KeyName": { "Fn::FindInMap" : [ "VpcMap", { "Ref" : "VpcId" }, "KeyPair"] },
+                "SecurityGroups": { "Fn::Split": [ ",",
+                    { "Fn::Join": [ ",", [
+                        { "Fn::FindInMap" : [ "VpcMap", { "Ref" : "VpcId" }, "DefaultSecurityGroup"] },
+                        { "Fn::FindInMap" : [ "VpcMap", { "Ref" : "VpcId" }, "AllowShhFromInternet"] },
+                        { "Fn::Join": [ ",", { "Ref": "SecurityGroups" } ] }
+                    ] ] }
+                ] },
+                "UserData": {
+                    "Fn::Base64": { "Fn::Join": [ "", [
+                        "#!/bin/bash -xe\n",
+                        "INSTANCE_ID=$(curl --ipv4 --silent http://169.254.169.254/latest/meta-data/instance-id)\n",
+                        "aws --region ", { "Ref": "AWS::Region" } ," ec2 associate-address --instance-id ${INSTANCE_ID} --allocation-id ", { "Fn::FindInMap" : [ "VpcMap", { "Ref" : "VpcId" }, "AllocationId"] }, " --allow-reassociation\n"
+                    ] ] }
+                }
+            }
+        },
+        "BastionAutoScalingGroup": {
+            "Type": "AWS::AutoScaling::AutoScalingGroup",
+            "DependsOn": [ "BastionLaunchConfiguration" ],
+            "Properties": {
+                "HealthCheckType": "EC2",
+                "LaunchConfigurationName": { "Ref": "BastionLaunchConfiguration" },
+                "MaxSize": 1,
+                "MinSize": 1,
+                "VPCZoneIdentifier": { "Fn::FindInMap" : [ "VpcMap", { "Ref" : "VpcId" }, "PublicSubnets"] },
+                "TerminationPolicies": [
+                    "OldestInstance"
+                ],
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": { "Fn::Join": ["", [{ "Fn::FindInMap" : [ "VpcMap", { "Ref" : "VpcId" }, "Environment"] }, " - Bastion"]] },
+                        "PropagateAtLaunch": true
+                    },
+                    {
+                        "Key": "project",
+                        "Value": "global",
+                        "PropagateAtLaunch": true
+                    },
+                    {
+                        "Key": "environment",
+                        "Value": { "Fn::FindInMap" : [ "VpcMap", { "Ref" : "VpcId" }, "Environment"] },
+                        "PropagateAtLaunch": true
+                    }
+                ]
+            }
+        }
+    }
+}

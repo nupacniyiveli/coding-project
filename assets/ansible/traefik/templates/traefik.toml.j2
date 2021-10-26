@@ -1,0 +1,23 @@
+# please see: https://docs.traefik.io/configuration/commons/ for details
+debug = false
+checkNewVersion = false
+defaultEntryPoints = [{{ default_entry_points }}]
+
+# https://docs.traefik.io/configuration/commons/#logs-definition
+traefikLogsFile = "/var/log/traefik/traefik.log"
+logLevel = "ERROR"
+
+[web]
+readOnly = true
+address = ":{{ web_admin_port }}"
+
+# https://docs.traefik.io/configuration/commons/#health-check-configuration
+[healthcheck]
+interval = "30s"
+
+# https://docs.traefik.io/configuration/backends/docker/
+[docker]
+endpoint = "unix:///var/run/docker.sock"
+domain = "{{ domain_name }}"
+watch = true
+exposedbydefault = false
