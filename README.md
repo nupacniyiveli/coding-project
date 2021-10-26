@@ -1,4 +1,4 @@
-# Personio coding challenge - Niyi Adegoke
+# My coding challenge - Niyi Adegoke
 
 This repository contains the result of the coding challenge.
 
